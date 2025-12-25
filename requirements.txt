@@ -11,9 +11,9 @@ fastapi>=0.109.0
 uvicorn>=0.27.0
 pydantic>=2.0.0
 
-# For live trading (optional - only needed for real trading)
-# py-clob-client>=0.1.0
-# web3>=7.0.0
+# For live trading
+py-clob-client>=0.18.0
+web3>=6.0.0
 
 # Utilities
 python-dotenv>=1.0.0
