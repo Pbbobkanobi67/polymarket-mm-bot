@@ -15,8 +15,8 @@ import {
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import './App.css'
 
-const API_URL = 'http://localhost:8000'
-const WS_URL = 'ws://localhost:8000/ws'
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8000/ws'
 
 interface Position {
   token_id: string
