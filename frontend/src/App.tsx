@@ -10,7 +10,13 @@ import {
   BarChart3,
   Settings,
   Wifi,
-  WifiOff
+  WifiOff,
+  LayoutDashboard,
+  Shield,
+  Clock,
+  Percent,
+  Target,
+  AlertTriangle
 } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import './App.css'
@@ -107,6 +113,8 @@ interface Config {
   refresh_interval: number
 }
 
+type ViewType = 'dashboard' | 'admin'
+
 function App() {
   const [botState, setBotState] = useState<BotState | null>(null)
   const [markets, setMarkets] = useState<Market[]>([])
@@ -116,6 +124,8 @@ function App() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
+  const [currentView, setCurrentView] = useState<ViewType>('dashboard')
+  const [sessionStartTime] = useState<Date>(new Date())
   const wsRef = useRef<WebSocket | null>(null)
 
   // Helper to get market name from token ID
@@ -354,6 +364,20 @@ function App() {
             <span className="paper-badge">Paper Trading</span>
           )}
         </div>
+        <nav className="header-nav">
+          <button
+            className={`nav-btn ${currentView === 'dashboard' ? 'active' : ''}`}
+            onClick={() => setCurrentView('dashboard')}
+          >
+            <LayoutDashboard size={16} /> Dashboard
+          </button>
+          <button
+            className={`nav-btn ${currentView === 'admin' ? 'active' : ''}`}
+            onClick={() => setCurrentView('admin')}
+          >
+            <Shield size={16} /> Admin
+          </button>
+        </nav>
         <div className="header-right">
           <span className={`ws-status ${wsConnected ? 'connected' : 'disconnected'}`}>
             {wsConnected ? <Wifi size={16} /> : <WifiOff size={16} />}
@@ -370,6 +394,8 @@ function App() {
       )}
 
       <main className="main">
+        {currentView === 'dashboard' ? (
+          <>
         {/* Left Panel - Controls */}
         <aside className="sidebar">
           {/* Bot Controls */}
@@ -385,20 +411,22 @@ function App() {
                   <Play size={16} /> Start Bot
                 </button>
               ) : (
-                <button
-                  className="btn btn-danger"
-                  onClick={stopBot}
-                  disabled={loading}
-                >
-                  <Square size={16} /> Stop Bot
-                </button>
-                <button
-                  className="btn btn-cashout"
-                  onClick={cashout}
-                  disabled={loading}
-                >
-                  <DollarSign size={16} /> Cashout
-                </button>
+                <>
+                  <button
+                    className="btn btn-danger"
+                    onClick={stopBot}
+                    disabled={loading}
+                  >
+                    <Square size={16} /> Stop Bot
+                  </button>
+                  <button
+                    className="btn btn-cashout"
+                    onClick={cashout}
+                    disabled={loading}
+                  >
+                    <DollarSign size={16} /> Cashout
+                  </button>
+                </>
               )}
               <button className="btn btn-secondary" onClick={fetchStatus}>
                 <RefreshCw size={16} /> Refresh
@@ -694,6 +722,208 @@ function App() {
             </section>
           )}
         </div>
+          </>
+        ) : (
+          /* Admin Panel */
+          <div className="admin-panel">
+            {/* Session Stats */}
+            <section className="admin-header">
+              <div className="admin-stats-grid">
+                <div className="admin-stat-card">
+                  <div className="admin-stat-icon session">
+                    <Clock size={24} />
+                  </div>
+                  <div className="admin-stat-content">
+                    <span className="admin-stat-label">Session Duration</span>
+                    <span className="admin-stat-value">
+                      {Math.floor((Date.now() - sessionStartTime.getTime()) / 60000)} min
+                    </span>
+                  </div>
+                </div>
+                <div className="admin-stat-card">
+                  <div className="admin-stat-icon trades">
+                    <Activity size={24} />
+                  </div>
+                  <div className="admin-stat-content">
+                    <span className="admin-stat-label">Total Trades</span>
+                    <span className="admin-stat-value">{botState?.fills_count || 0}</span>
+                  </div>
+                </div>
+                <div className="admin-stat-card">
+                  <div className="admin-stat-icon pnl">
+                    <DollarSign size={24} />
+                  </div>
+                  <div className="admin-stat-content">
+                    <span className="admin-stat-label">Total PnL</span>
+                    <span className={`admin-stat-value ${totalPnL >= 0 ? 'positive' : 'negative'}`}>
+                      ${totalPnL.toFixed(2)}
+                    </span>
+                  </div>
+                </div>
+                <div className="admin-stat-card">
+                  <div className="admin-stat-icon winrate">
+                    <Percent size={24} />
+                  </div>
+                  <div className="admin-stat-content">
+                    <span className="admin-stat-label">Win Rate</span>
+                    <span className="admin-stat-value">
+                      {botState?.recent_trades && botState.recent_trades.length > 0
+                        ? `${Math.round((botState.recent_trades.filter(t => t.side === 'SELL').length / botState.recent_trades.length) * 100)}%`
+                        : 'N/A'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            {/* Risk Overview */}
+            <section className="card admin-risk-section">
+              <h2><AlertTriangle size={18} /> Risk Management</h2>
+              <div className="risk-grid">
+                <div className="risk-item">
+                  <span className="risk-label">Total Exposure</span>
+                  <span className="risk-value">${(botState?.risk_metrics?.total_exposure || 0).toFixed(2)}</span>
+                </div>
+                <div className="risk-item">
+                  <span className="risk-label">Max Position Size</span>
+                  <span className="risk-value">{botState?.risk_metrics?.max_position_size || 0}</span>
+                </div>
+                <div className="risk-item">
+                  <span className="risk-label">Current Max Position</span>
+                  <span className="risk-value">{botState?.risk_metrics?.current_max_position || 0}</span>
+                </div>
+                <div className="risk-item">
+                  <span className="risk-label">Inventory Imbalance</span>
+                  <span className="risk-value">{((botState?.risk_metrics?.inventory_imbalance || 0) * 100).toFixed(1)}%</span>
+                </div>
+                <div className="risk-item">
+                  <span className="risk-label">Risk Status</span>
+                  <span className={`risk-value ${botState?.risk_metrics?.is_halted ? 'danger' : 'safe'}`}>
+                    {botState?.risk_metrics?.is_halted ? 'HALTED' : 'Normal'}
+                  </span>
+                </div>
+                <div className="risk-item">
+                  <span className="risk-label">Active Markets</span>
+                  <span className="risk-value">{selectedMarkets.length}</span>
+                </div>
+              </div>
+            </section>
+
+            {/* Full Trade History */}
+            <section className="card admin-trades-section">
+              <h2><Target size={18} /> Complete Trade History</h2>
+              {botState?.recent_trades && botState.recent_trades.length > 0 ? (
+                <div className="admin-trades-container">
+                  <table className="data-table admin-trades-table">
+                    <thead>
+                      <tr>
+                        <th>Trade ID</th>
+                        <th>Time</th>
+                        <th>Market</th>
+                        <th>Side</th>
+                        <th>Price</th>
+                        <th>Size</th>
+                        <th>Value</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {botState.recent_trades.map(trade => (
+                        <tr key={trade.trade_id}>
+                          <td className="trade-id">{trade.trade_id.slice(0, 8)}...</td>
+                          <td className="trade-time">
+                            {new Date(trade.timestamp).toLocaleString()}
+                          </td>
+                          <td className="trade-market" title={trade.token_id}>
+                            {getMarketName(trade.token_id)}
+                          </td>
+                          <td className={trade.side === 'BUY' ? 'buy' : 'sell'}>
+                            {trade.side}
+                          </td>
+                          <td>${trade.price.toFixed(4)}</td>
+                          <td>{trade.size.toFixed(2)}</td>
+                          <td>${(trade.price * trade.size).toFixed(2)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="empty-state">No trades recorded this session</p>
+              )}
+            </section>
+
+            {/* Configuration Overview */}
+            <section className="card admin-config-section">
+              <h2><Settings size={18} /> Current Configuration</h2>
+              {config && (
+                <div className="config-grid">
+                  <div className="config-item">
+                    <span className="config-label">Trading Mode</span>
+                    <span className={`config-value ${config.paper_trading ? 'paper' : 'live'}`}>
+                      {config.paper_trading ? 'Paper Trading' : 'LIVE'}
+                    </span>
+                  </div>
+                  <div className="config-item">
+                    <span className="config-label">Base Spread</span>
+                    <span className="config-value">{(config.base_spread * 100).toFixed(1)}%</span>
+                  </div>
+                  <div className="config-item">
+                    <span className="config-label">Order Size</span>
+                    <span className="config-value">${config.order_size}</span>
+                  </div>
+                  <div className="config-item">
+                    <span className="config-label">Max Position</span>
+                    <span className="config-value">{config.max_position}</span>
+                  </div>
+                  <div className="config-item">
+                    <span className="config-label">Max Exposure</span>
+                    <span className="config-value">${config.max_exposure}</span>
+                  </div>
+                  <div className="config-item">
+                    <span className="config-label">WebSocket</span>
+                    <span className="config-value">{config.use_websocket ? 'Enabled' : 'Disabled'}</span>
+                  </div>
+                </div>
+              )}
+            </section>
+
+            {/* Bot Controls */}
+            <section className="card admin-controls-section">
+              <h2><Shield size={18} /> Bot Controls</h2>
+              <div className="admin-controls">
+                {!isRunning ? (
+                  <button
+                    className="btn btn-primary btn-lg"
+                    onClick={startBot}
+                    disabled={loading || selectedMarkets.length === 0}
+                  >
+                    <Play size={20} /> Start Bot
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      className="btn btn-danger btn-lg"
+                      onClick={stopBot}
+                      disabled={loading}
+                    >
+                      <Square size={20} /> Stop Bot
+                    </button>
+                    <button
+                      className="btn btn-cashout btn-lg"
+                      onClick={cashout}
+                      disabled={loading}
+                    >
+                      <DollarSign size={20} /> Emergency Cashout
+                    </button>
+                  </>
+                )}
+                <button className="btn btn-secondary" onClick={fetchStatus}>
+                  <RefreshCw size={16} /> Refresh Data
+                </button>
+              </div>
+            </section>
+          </div>
+        )}
       </main>
     </div>
   )
