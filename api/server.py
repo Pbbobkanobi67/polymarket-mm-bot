@@ -15,10 +15,14 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Quer
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import uvicorn
+from dotenv import load_dotenv
 
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Load environment variables from .env file
+load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.env'))
 
 from src import PolymarketClient, MarketMakingBot
 from src.client import OrderBook, Trade, Market
@@ -38,7 +42,7 @@ class BotState:
         self.is_running: bool = False
         self.target_markets: List[str] = []
         self.config: Dict[str, Any] = {
-            "paper_trading": True,
+            "paper_trading": os.getenv("PAPER_TRADING", "true").lower() == "true",
             "use_websocket": True,
             "base_spread": 0.02,
             "order_size": 20.0,
@@ -46,6 +50,7 @@ class BotState:
             "max_exposure": 1000.0,
             "refresh_interval": 5.0,
         }
+        logger.info(f"Paper trading mode: {self.config['paper_trading']}")
         # WebSocket clients for broadcasting
         self.ws_clients: List[WebSocket] = []
         self.broadcast_task: Optional[asyncio.Task] = None
@@ -440,6 +445,101 @@ async def remove_market(request: StartBotRequest):
                     del state.bot._orderbooks[token_id]
 
     return {"status": "removed", "removed": removed, "all_markets": state.target_markets}
+
+
+@app.post("/api/bot/cashout")
+async def cashout():
+    """
+    Emergency cashout - cancel all orders and close all positions.
+    This will:
+    1. Cancel all open orders
+    2. Market sell all long positions
+    3. Market buy to close all short positions
+    4. Stop the bot
+    """
+    if not state.bot:
+        raise HTTPException(400, "Bot is not running")
+
+    logger.info("CASHOUT INITIATED - Closing all positions")
+
+    results = {
+        "orders_cancelled": 0,
+        "positions_closed": [],
+        "final_pnl": {
+            "realized": 0,
+            "unrealized": 0,
+            "total": 0
+        }
+    }
+
+    try:
+        # Step 1: Cancel all open orders
+        if state.bot.order_manager:
+            await state.bot.order_manager.cancel_all_orders()
+            results["orders_cancelled"] = len(state.bot.order_manager.get_live_orders())
+            logger.info(f"Cancelled all orders")
+
+        # Step 2: Close all positions
+        positions = state.bot.inventory_manager.get_all_positions()
+        for token_id, position in positions.items():
+            if position.quantity != 0:
+                # Get current orderbook to find best price
+                book = state.bot._orderbooks.get(token_id)
+
+                if position.quantity > 0:
+                    # Long position - sell to close
+                    side = "SELL"
+                    # Use best bid or mid price
+                    price = book.bids[0]["price"] if book and book.bids else position.avg_entry_price
+                else:
+                    # Short position - buy to close
+                    side = "BUY"
+                    # Use best ask or mid price
+                    price = book.asks[0]["price"] if book and book.asks else position.avg_entry_price
+
+                size = abs(position.quantity)
+
+                # Place market order to close
+                order = await state.client.place_order(
+                    token_id=token_id,
+                    side=side,
+                    price=price,
+                    size=Decimal(str(size)),
+                )
+
+                results["positions_closed"].append({
+                    "token_id": token_id,
+                    "side": side,
+                    "size": size,
+                    "price": float(price),
+                    "pnl": float(position.realized_pnl + position.unrealized_pnl)
+                })
+
+                logger.info(f"Closed position: {side} {size} @ {price} for {token_id[:16]}...")
+
+        # Step 3: Get final PnL
+        results["final_pnl"] = {
+            "realized": float(state.bot.inventory_manager.get_total_realized_pnl()),
+            "unrealized": float(state.bot.inventory_manager.get_total_unrealized_pnl()),
+            "total": float(
+                state.bot.inventory_manager.get_total_realized_pnl() +
+                state.bot.inventory_manager.get_total_unrealized_pnl()
+            )
+        }
+
+        # Step 4: Stop the bot
+        await state.stop_bot()
+
+        logger.info(f"CASHOUT COMPLETE - Final PnL: ${results['final_pnl']['total']:.2f}")
+
+    except Exception as e:
+        logger.error(f"Cashout error: {e}")
+        raise HTTPException(500, f"Cashout failed: {str(e)}")
+
+    return {
+        "status": "cashout_complete",
+        "results": results
+    }
 
 
 # ==================== WebSocket ====================

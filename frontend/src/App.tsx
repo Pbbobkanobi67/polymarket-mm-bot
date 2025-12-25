@@ -260,6 +260,31 @@ function App() {
     }
   }
 
+  const cashout = async () => {
+    if (!confirm('CASHOUT: This will cancel all orders, close all positions, and stop the bot. Continue?')) {
+      return
+    }
+
+    setLoading(true)
+    setError(null)
+
+    try {
+      const res = await fetch(`${API_URL}/api/bot/cashout`, { method: 'POST' })
+      const data = await res.json()
+
+      if (!res.ok) {
+        throw new Error(data.detail || 'Cashout failed')
+      }
+
+      // Show results
+      alert(`CASHOUT COMPLETE!\n\nOrders Cancelled: ${data.results.orders_cancelled}\nPositions Closed: ${data.results.positions_closed.length}\n\nFinal PnL:\n  Realized: $${data.results.final_pnl.realized.toFixed(2)}\n  Unrealized: $${data.results.final_pnl.unrealized.toFixed(2)}\n  Total: $${data.results.final_pnl.total.toFixed(2)}`)
+    } catch (e: any) {
+      setError(e.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
   const updateConfig = async (updates: Partial<Config>) => {
     try {
       const res = await fetch(`${API_URL}/api/config`, {
@@ -366,6 +391,13 @@ function App() {
                   disabled={loading}
                 >
                   <Square size={16} /> Stop Bot
+                </button>
+                <button
+                  className="btn btn-cashout"
+                  onClick={cashout}
+                  disabled={loading}
+                >
+                  <DollarSign size={16} /> Cashout
                 </button>
               )}
               <button className="btn btn-secondary" onClick={fetchStatus}>
