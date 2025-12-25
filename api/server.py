@@ -293,10 +293,21 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS for React frontend
+# CORS origins - includes Vercel production domain
+CORS_ORIGINS = [
+    "http://localhost:5173",
+    "http://localhost:5174",
+    "http://localhost:3000",
+    "http://127.0.0.1:5173",
+    "https://polymarket-mm-bot.vercel.app",
+]
+# Add custom origins from environment
+if os.getenv("CORS_ORIGINS"):
+    CORS_ORIGINS.extend(os.getenv("CORS_ORIGINS").split(","))
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:5173"],
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -575,8 +586,11 @@ async def websocket_endpoint(websocket: WebSocket):
 
 # ==================== Main ====================
 
-def run_server(host: str = "0.0.0.0", port: int = 8000):
+def run_server(host: str = None, port: int = None):
     """Run the API server"""
+    host = host or os.getenv("HOST", "0.0.0.0")
+    port = port or int(os.getenv("PORT", "8000"))
+    logger.info(f"Starting server on {host}:{port}")
     uvicorn.run(app, host=host, port=port)
 
 
