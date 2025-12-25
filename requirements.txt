@@ -1,0 +1,23 @@
+# Polymarket Market Making Bot - Requirements
+
+# Async HTTP client
+aiohttp>=3.9.0
+
+# WebSocket client for real-time data
+websockets>=12.0
+
+# API server
+fastapi>=0.109.0
+uvicorn>=0.27.0
+pydantic>=2.0.0
+
+# For live trading (optional - only needed for real trading)
+# py-clob-client>=0.1.0
+# web3>=7.0.0
+
+# Utilities
+python-dotenv>=1.0.0
+
+# For development/testing
+pytest>=7.0.0
+pytest-asyncio>=0.23.0
