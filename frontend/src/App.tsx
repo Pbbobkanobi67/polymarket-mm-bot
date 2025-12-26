@@ -277,23 +277,32 @@ function App() {
   }
 
   const addRecommendedMarket = async (tokenId: string) => {
-    try {
-      const res = await fetch(`${API_URL}/api/bot/markets/add`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token_ids: [tokenId] }),
-      })
-      if (res.ok) {
-        const data = await res.json()
-        setSelectedMarkets(data.all_markets)
-        // Update recommendation status
-        setRecommendations(prev => prev.map(r =>
-          r.token_id === tokenId ? { ...r, already_active: true } : r
-        ))
+    // If bot is running, use API to add market dynamically
+    if (botState?.status === 'running') {
+      try {
+        const res = await fetch(`${API_URL}/api/bot/markets/add`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token_ids: [tokenId] }),
+        })
+        if (res.ok) {
+          const data = await res.json()
+          setSelectedMarkets(data.all_markets)
+        }
+      } catch (e) {
+        console.error('Failed to add market:', e)
       }
-    } catch (e) {
-      console.error('Failed to add market:', e)
+    } else {
+      // Bot not running - just update local state
+      setSelectedMarkets(prev =>
+        prev.includes(tokenId) ? prev : [...prev, tokenId]
+      )
     }
+
+    // Update recommendation status
+    setRecommendations(prev => prev.map(r =>
+      r.token_id === tokenId ? { ...r, already_active: true } : r
+    ))
   }
 
   const startBot = async () => {
