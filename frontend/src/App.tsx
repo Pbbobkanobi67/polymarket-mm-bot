@@ -156,11 +156,38 @@ function App() {
   const [error, setError] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [currentView, setCurrentView] = useState<ViewType>('dashboard')
-  const [sessionStartTime] = useState<Date>(new Date())
+  const [botStartTime, setBotStartTime] = useState<Date | null>(null)
+  const [sessionDuration, setSessionDuration] = useState<string>('00:00:00')
   const wsRef = useRef<WebSocket | null>(null)
   const [recommendations, setRecommendations] = useState<MarketRecommendation[]>([])
   const [aiExplanation, setAiExplanation] = useState<string | null>(null)
   const [loadingRecs, setLoadingRecs] = useState(false)
+
+  // Update session duration every second
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (botStartTime && botState?.status === 'running') {
+        const diff = Date.now() - botStartTime.getTime()
+        const hours = Math.floor(diff / 3600000)
+        const minutes = Math.floor((diff % 3600000) / 60000)
+        const seconds = Math.floor((diff % 60000) / 1000)
+        setSessionDuration(
+          `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`
+        )
+      }
+    }, 1000)
+    return () => clearInterval(interval)
+  }, [botStartTime, botState?.status])
+
+  // Track when bot starts/stops
+  useEffect(() => {
+    if (botState?.status === 'running' && !botStartTime) {
+      setBotStartTime(new Date())
+    } else if (botState?.status !== 'running' && botStartTime) {
+      setBotStartTime(null)
+      setSessionDuration('00:00:00')
+    }
+  }, [botState?.status, botStartTime])
 
   // Helper to get market name from token ID
   const getMarketName = useCallback((tokenId: string): string => {
@@ -441,6 +468,11 @@ function App() {
           </span>
           {botState?.paper_trading && (
             <span className="paper-badge">Paper Trading</span>
+          )}
+          {isRunning && (
+            <span className="session-timer">
+              <Clock size={14} /> {sessionDuration}
+            </span>
           )}
         </div>
         <nav className="header-nav">
@@ -856,7 +888,7 @@ function App() {
                   <div className="admin-stat-content">
                     <span className="admin-stat-label">Session Duration</span>
                     <span className="admin-stat-value">
-                      {Math.floor((Date.now() - sessionStartTime.getTime()) / 60000)} min
+                      {sessionDuration}
                     </span>
                   </div>
                 </div>
