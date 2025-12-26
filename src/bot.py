@@ -123,6 +123,11 @@ class MarketMakingBot:
             if self.use_websocket:
                 await self._setup_websocket()
 
+            # Start paper trading simulator if in paper mode
+            if self.paper_trading:
+                await self.client.start_paper_simulator()
+                logger.info("Paper trading simulator started (realistic mode)")
+
             # Main loop
             await self._run_loop()
         except Exception as e:
@@ -467,16 +472,32 @@ class MarketMakingBot:
     async def _cleanup(self):
         """Cleanup on shutdown"""
         logger.info("Cleaning up...")
-        
+
         # Cancel all orders
         await self.order_manager.cancel_all_orders()
-        
+
+        # Print simulation stats if available
+        sim_stats = self.client.get_simulation_stats()
+        if sim_stats:
+            print("\n" + "="*60)
+            print("PAPER TRADING SIMULATION SUMMARY")
+            print("="*60)
+            print(f"Orders Placed:      {sim_stats.get('orders_placed', 0)}")
+            print(f"Orders Filled:      {sim_stats.get('orders_filled', 0)}")
+            print(f"Orders Cancelled:   {sim_stats.get('orders_cancelled', 0)}")
+            print(f"Adverse Fills:      {sim_stats.get('adverse_fills', 0)}")
+            print(f"Favorable Fills:    {sim_stats.get('favorable_fills', 0)}")
+            print(f"Adverse Fill Rate:  {sim_stats.get('adverse_fill_rate', 0):.1%}")
+            print(f"Total Volume:       ${sim_stats.get('total_volume', 0):.2f}")
+            print(f"Final Balance:      ${sim_stats.get('balance', 0):.2f}")
+            print("="*60 + "\n")
+
         # Close client
         await self.client.close()
-        
+
         # Print final summary
         self.pnl_tracker.print_summary()
-        
+
         logger.info("Bot stopped")
     
     def _print_status(self):
@@ -527,7 +548,16 @@ class MarketMakingBot:
                 f"Asks: {counts['SELL']:>2}  "
                 f"Mid: ${mid:.3f}" if mid else ""
             )
-        
+
+        # Print simulation stats if using realistic simulator
+        sim_stats = self.client.get_simulation_stats()
+        if sim_stats:
+            print(f"\n{'SIMULATION STATS':^60}")
+            print("-"*60)
+            print(f"Adverse Fill Rate:  {sim_stats.get('adverse_fill_rate', 0):>10.1%}")
+            print(f"Maker Volume:       ${sim_stats.get('maker_volume', 0):>10.2f}")
+            print(f"Taker Volume:       ${sim_stats.get('taker_volume', 0):>10.2f}")
+
         print("="*60 + "\n")
 
 

@@ -34,6 +34,14 @@ except ImportError:
     WEBSOCKET_AVAILABLE = False
     PolymarketWebSocket = None
 
+# Import realistic paper trading simulator
+try:
+    from .paper_simulator import PaperTradingSimulator, QueuedOrder, SimulatedTrade
+    SIMULATOR_AVAILABLE = True
+except ImportError:
+    SIMULATOR_AVAILABLE = False
+    PaperTradingSimulator = None
+
 
 @dataclass
 class OrderBook:
@@ -167,6 +175,7 @@ class PolymarketClient:
         funder_address: str = "",
         paper_trading: bool = True,
         use_websocket: bool = False,
+        realistic_simulation: bool = True,  # Use advanced paper trading simulator
     ):
         self.private_key = private_key
         self.api_key = api_key
@@ -175,6 +184,7 @@ class PolymarketClient:
         self.funder_address = funder_address
         self.paper_trading = paper_trading
         self.use_websocket = use_websocket and WEBSOCKET_AVAILABLE
+        self.realistic_simulation = realistic_simulation and SIMULATOR_AVAILABLE
 
         self._session: Optional[aiohttp.ClientSession] = None
 
@@ -188,7 +198,18 @@ class PolymarketClient:
         self._on_trade: Optional[Callable[[Trade], None]] = None
         self._on_fill: Optional[Callable[[Trade], None]] = None
 
-        # Paper trading state
+        # Realistic paper trading simulator
+        self._simulator: Optional[PaperTradingSimulator] = None
+        if self.paper_trading and self.realistic_simulation:
+            self._simulator = PaperTradingSimulator(
+                starting_balance=Decimal("1000.0"),
+                enable_latency=True,
+                enable_adverse_selection=True,
+                enable_partial_fills=True,
+            )
+            logger.info("[CLIENT] Using realistic paper trading simulator")
+
+        # Simple paper trading state (fallback if simulator not available)
         self._paper_orders: Dict[str, Order] = {}
         self._paper_trades: List[Trade] = []
         self._paper_balance: Decimal = Decimal("1000.0")  # Starting balance
@@ -202,6 +223,10 @@ class PolymarketClient:
     
     async def close(self):
         """Close the client session and WebSocket"""
+        # Stop simulator
+        if self._simulator:
+            await self._simulator.stop()
+
         if self._ws:
             await self._ws.disconnect()
             self._ws = None
@@ -209,6 +234,14 @@ class PolymarketClient:
 
         if self._session and not self._session.closed:
             await self._session.close()
+
+    async def start_paper_simulator(self):
+        """Start the paper trading simulator (call after setting callbacks)"""
+        if self._simulator:
+            # Wire up fill callback
+            if self._on_fill:
+                self._simulator.set_fill_callback(self._on_fill)
+            await self._simulator.start()
 
     # ==================== WebSocket Methods ====================
 
@@ -282,21 +315,28 @@ class PolymarketClient:
     def _handle_ws_book(self, snapshot: "BookSnapshot"):
         """Handle orderbook snapshot from WebSocket"""
         # Convert to OrderBook format
+        bids = [
+            {"price": level.price, "size": level.size}
+            for level in snapshot.bids
+        ]
+        asks = [
+            {"price": level.price, "size": level.size}
+            for level in snapshot.asks
+        ]
+
         orderbook = OrderBook(
             token_id=snapshot.asset_id,
             timestamp=snapshot.timestamp,
-            bids=[
-                {"price": level.price, "size": level.size}
-                for level in snapshot.bids
-            ],
-            asks=[
-                {"price": level.price, "size": level.size}
-                for level in snapshot.asks
-            ],
+            bids=bids,
+            asks=asks,
             market_id=snapshot.market_id,
         )
 
         self._ws_orderbooks[snapshot.asset_id] = orderbook
+
+        # Feed simulator with orderbook data for queue position calculation
+        if self._simulator:
+            self._simulator.update_orderbook(snapshot.asset_id, bids, asks)
 
         if self._on_orderbook_update:
             try:
@@ -338,6 +378,14 @@ class PolymarketClient:
 
         book.timestamp = datetime.utcnow()
 
+        # Update simulator with new book state
+        if self._simulator:
+            self._simulator.update_orderbook(
+                change.asset_id,
+                book.bids,
+                book.asks
+            )
+
         # Notify callback
         if self._on_orderbook_update:
             try:
@@ -360,6 +408,10 @@ class PolymarketClient:
             timestamp=trade.timestamp,
             order_id="",
         )
+
+        # Record market trade for simulator volume estimation
+        if self._simulator:
+            self._simulator.record_market_trade(trade.asset_id, trade.size)
 
         if self._on_trade:
             try:
@@ -600,13 +652,19 @@ class PolymarketClient:
                     for a in data.get("asks", [])
                 ]
 
-                return OrderBook(
+                orderbook = OrderBook(
                     token_id=token_id,
                     timestamp=datetime.utcnow(),
                     bids=sorted(bids, key=lambda x: x["price"], reverse=True),
                     asks=sorted(asks, key=lambda x: x["price"]),
                     market_id=data.get("market", ""),
                 )
+
+                # Feed simulator with orderbook data
+                if self._simulator:
+                    self._simulator.update_orderbook(token_id, orderbook.bids, orderbook.asks)
+
+                return orderbook
 
         except Exception as e:
             logger.error(f"Error fetching orderbook: {e}")
@@ -652,6 +710,23 @@ class PolymarketClient:
             order_type: GTC, FOK, or FAK
         """
         if self.paper_trading:
+            # Use realistic simulator if available
+            if self._simulator:
+                order = await self._simulator.place_order(token_id, side, price, size, order_type)
+                if order:
+                    # Convert to standard Order format
+                    return Order(
+                        order_id=order.order_id,
+                        token_id=order.token_id,
+                        side=order.side,
+                        price=order.price,
+                        size=order.size,
+                        size_matched=order.size_matched,
+                        status=order.status,
+                        created_at=order.created_at,
+                        order_type=order.order_type,
+                    )
+                return None
             return await self._paper_place_order(token_id, side, price, size, order_type)
         
         # Live trading
@@ -701,6 +776,8 @@ class PolymarketClient:
     async def cancel_order(self, order_id: str) -> bool:
         """Cancel an order"""
         if self.paper_trading:
+            if self._simulator:
+                return await self._simulator.cancel_order(order_id)
             return await self._paper_cancel_order(order_id)
         
         session = await self._get_session()
@@ -724,6 +801,8 @@ class PolymarketClient:
     async def cancel_all_orders(self, token_id: Optional[str] = None) -> int:
         """Cancel all orders, optionally filtered by token"""
         if self.paper_trading:
+            if self._simulator:
+                return await self._simulator.cancel_all_orders(token_id)
             return await self._paper_cancel_all_orders(token_id)
         
         session = await self._get_session()
@@ -756,6 +835,22 @@ class PolymarketClient:
     ) -> List[Order]:
         """Get orders for the authenticated user"""
         if self.paper_trading:
+            if self._simulator:
+                sim_orders = self._simulator.get_orders(token_id, status)
+                return [
+                    Order(
+                        order_id=o.order_id,
+                        token_id=o.token_id,
+                        side=o.side,
+                        price=o.price,
+                        size=o.size,
+                        size_matched=o.size_matched,
+                        status=o.status,
+                        created_at=o.created_at,
+                        order_type=o.order_type,
+                    )
+                    for o in sim_orders
+                ]
             return await self._paper_get_orders(token_id, status)
         
         session = await self._get_session()
@@ -804,6 +899,21 @@ class PolymarketClient:
     ) -> List[Trade]:
         """Get trade history"""
         if self.paper_trading:
+            if self._simulator:
+                sim_trades = self._simulator.get_trades(limit)
+                return [
+                    Trade(
+                        trade_id=t.trade_id,
+                        token_id=t.token_id,
+                        side=t.side,
+                        price=t.price,
+                        size=t.size,
+                        fee=t.fee,
+                        timestamp=t.timestamp,
+                        order_id=t.order_id,
+                    )
+                    for t in sim_trades
+                ]
             return self._paper_trades[-limit:]
         
         session = await self._get_session()
@@ -982,8 +1092,19 @@ class PolymarketClient:
 
     def get_paper_balance(self) -> Decimal:
         """Get paper trading balance"""
+        if self._simulator:
+            return self._simulator.get_balance()
         return self._paper_balance
-    
+
     def get_paper_positions(self) -> Dict[str, int]:
         """Get paper trading positions"""
+        if self._simulator:
+            positions = self._simulator.get_all_positions()
+            return {k: int(v) for k, v in positions.items()}
         return self._paper_positions.copy()
+
+    def get_simulation_stats(self) -> Optional[Dict]:
+        """Get detailed simulation statistics (only available with realistic simulator)"""
+        if self._simulator:
+            return self._simulator.get_stats()
+        return None

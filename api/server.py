@@ -227,6 +227,7 @@ class BotState:
             "pnl_history": pnl_history,
             "fills_count": len(self.bot.pnl_tracker._fills),
             "recent_trades": self._get_recent_trades(50),
+            "simulation_stats": self.client.get_simulation_stats() if self.client else None,
         }
 
     def _get_recent_trades(self, limit: int = 50) -> List[Dict]:
