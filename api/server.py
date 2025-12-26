@@ -13,6 +13,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import uvicorn
 from dotenv import load_dotenv
@@ -26,6 +27,14 @@ load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file_
 
 from src import PolymarketClient, MarketMakingBot
 from src.client import OrderBook, Trade, Market
+
+# AI Assistant import (optional - gracefully handles missing API key)
+try:
+    from ai_assistant import TradingAssistant
+    AI_AVAILABLE = bool(os.getenv("ANTHROPIC_API_KEY"))
+except ImportError:
+    TradingAssistant = None
+    AI_AVAILABLE = False
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -272,6 +281,29 @@ class MarketInfo(BaseModel):
     yes_token_id: str
     no_token_id: str
     active: bool
+
+class ChatRequest(BaseModel):
+    message: str
+    conversation_id: Optional[str] = None
+
+
+# ==================== AI Assistant ====================
+
+# Global AI assistant instance (lazy initialization)
+_ai_assistant: Optional["TradingAssistant"] = None
+
+def get_ai_assistant() -> Optional["TradingAssistant"]:
+    """Get or create AI assistant instance"""
+    global _ai_assistant
+    if not AI_AVAILABLE:
+        return None
+    if _ai_assistant is None and TradingAssistant:
+        try:
+            _ai_assistant = TradingAssistant()
+        except Exception as e:
+            logger.error(f"Failed to initialize AI assistant: {e}")
+            return None
+    return _ai_assistant
 
 
 # ==================== Lifespan ====================
@@ -552,6 +584,78 @@ async def cashout():
         "status": "cashout_complete",
         "results": results
     }
+
+
+# ==================== AI Assistant Endpoints ====================
+
+@app.get("/api/ai/status")
+async def ai_status():
+    """Check if AI assistant is available"""
+    assistant = get_ai_assistant()
+    return {
+        "available": assistant is not None,
+        "model": os.getenv("AI_MODEL", "claude-sonnet-4-20250514") if assistant else None,
+    }
+
+
+@app.get("/api/ai/suggestions")
+async def ai_suggestions():
+    """Get suggested questions based on current bot state"""
+    assistant = get_ai_assistant()
+    if not assistant:
+        raise HTTPException(503, "AI assistant not configured. Set ANTHROPIC_API_KEY.")
+
+    bot_state = state.get_state_snapshot() if state.bot else None
+    suggestions = assistant.get_suggested_questions(bot_state)
+    return {"suggestions": suggestions}
+
+
+@app.post("/api/ai/chat")
+async def ai_chat(request: ChatRequest):
+    """Stream AI chat response with bot state context"""
+    assistant = get_ai_assistant()
+    if not assistant:
+        raise HTTPException(503, "AI assistant not configured. Set ANTHROPIC_API_KEY.")
+
+    if not request.message.strip():
+        raise HTTPException(400, "Message cannot be empty")
+
+    # Get current bot state for context
+    bot_state = state.get_state_snapshot() if state.bot else None
+
+    async def generate():
+        """Generate SSE stream"""
+        try:
+            async for chunk in assistant.chat_stream(
+                message=request.message,
+                bot_state=bot_state,
+                conversation_id=request.conversation_id,
+            ):
+                yield f"data: {json.dumps(chunk)}\n\n"
+        except Exception as e:
+            logger.error(f"AI chat error: {e}")
+            yield f"data: {json.dumps({'content': f'Error: {str(e)}', 'done': True, 'error': True})}\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        }
+    )
+
+
+@app.delete("/api/ai/conversation/{conversation_id}")
+async def clear_conversation(conversation_id: str):
+    """Clear a conversation history"""
+    assistant = get_ai_assistant()
+    if not assistant:
+        raise HTTPException(503, "AI assistant not configured")
+
+    cleared = assistant.clear_conversation(conversation_id)
+    return {"cleared": cleared, "conversation_id": conversation_id}
 
 
 # ==================== WebSocket ====================

@@ -18,6 +18,9 @@ web3>=6.0.0
 # Utilities
 python-dotenv>=1.0.0
 
+# AI Assistant
+anthropic>=0.40.0
+
 # For development/testing
 pytest>=7.0.0
 pytest-asyncio>=0.23.0

@@ -22,6 +22,7 @@ import {
 } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import './App.css'
+import ChatWidget from './components/ChatWidget'
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://polymarket-mm-bot.onrender.com'
 const WS_URL = import.meta.env.VITE_WS_URL || 'wss://polymarket-mm-bot.onrender.com/ws'
@@ -1030,6 +1031,13 @@ function App() {
           </div>
         )}
       </main>
+
+      {/* AI Trading Assistant */}
+      <ChatWidget
+        botState={botState}
+        markets={markets}
+        apiUrl={API_URL}
+      />
     </div>
   )
 }
