@@ -526,10 +526,25 @@ async def add_market(request: StartBotRequest):
         if token_id not in state.target_markets:
             state.target_markets.append(token_id)
             added.append(token_id)
-            # Subscribe to new market
+
             if state.bot and state.client:
-                await state.client.subscribe_assets([token_id])
+                # Add to bot's target markets
                 state.bot.target_markets.append(token_id)
+
+                # Subscribe to WebSocket updates
+                await state.client.subscribe_assets([token_id])
+
+                # Fetch initial orderbook immediately
+                try:
+                    orderbook = await state.client.get_orderbook(token_id)
+                    if orderbook:
+                        state.bot._orderbooks[token_id] = orderbook
+                        logger.info(f"Added market {token_id[:16]}... with orderbook")
+                except Exception as e:
+                    logger.error(f"Failed to fetch orderbook for {token_id}: {e}")
+
+    # Save state with new markets
+    state._save_state()
 
     return {"status": "added", "added": added, "all_markets": state.target_markets}
 
@@ -555,6 +570,9 @@ async def remove_market(request: StartBotRequest):
                     state.bot.target_markets.remove(token_id)
                 if token_id in state.bot._orderbooks:
                     del state.bot._orderbooks[token_id]
+
+    # Save state with updated markets
+    state._save_state()
 
     return {"status": "removed", "removed": removed, "all_markets": state.target_markets}
 
@@ -724,6 +742,90 @@ async def clear_conversation(conversation_id: str):
 
     cleared = assistant.clear_conversation(conversation_id)
     return {"cleared": cleared, "conversation_id": conversation_id}
+
+
+@app.get("/api/ai/recommend-markets")
+async def recommend_markets(limit: int = Query(10, le=20)):
+    """Get AI-recommended markets based on spread and liquidity analysis"""
+    assistant = get_ai_assistant()
+
+    # Fetch available markets
+    client = PolymarketClient(paper_trading=True)
+    try:
+        markets = await client.get_markets(active_only=True)
+
+        # Analyze top markets by fetching orderbook data
+        market_analysis = []
+        for market in markets[:30]:  # Check top 30 markets
+            try:
+                book = await client.get_orderbook(market.yes_token_id)
+                if book and book.bids and book.asks:
+                    spread = float(book.spread) if book.spread else 0
+                    mid_price = float(book.mid_price) if book.mid_price else 0.5
+                    bid_depth = sum(float(b["size"]) for b in book.bids[:5])
+                    ask_depth = sum(float(a["size"]) for a in book.asks[:5])
+                    spread_pct = (spread / mid_price * 100) if mid_price > 0 else 0
+
+                    # Calculate a simple profit score
+                    # Higher spread = more profit potential
+                    # Higher depth = more liquidity
+                    # Best when spread is 2-10% with good depth
+                    liquidity_score = min(bid_depth, ask_depth) / 100
+                    spread_score = spread_pct if 1 < spread_pct < 15 else 0
+                    profit_score = spread_score * (1 + liquidity_score)
+
+                    market_analysis.append({
+                        "token_id": market.yes_token_id,
+                        "question": market.question[:100],
+                        "mid_price": round(mid_price, 3),
+                        "spread": round(spread, 4),
+                        "spread_pct": round(spread_pct, 2),
+                        "bid_depth": round(bid_depth, 1),
+                        "ask_depth": round(ask_depth, 1),
+                        "profit_score": round(profit_score, 2),
+                        "already_active": market.yes_token_id in state.target_markets,
+                    })
+            except Exception as e:
+                logger.debug(f"Skipping market {market.yes_token_id}: {e}")
+                continue
+
+        # Sort by profit score
+        market_analysis.sort(key=lambda x: x["profit_score"], reverse=True)
+        recommendations = market_analysis[:limit]
+
+        # Get AI explanation if available
+        ai_explanation = None
+        if assistant and recommendations:
+            try:
+                # Build a simple summary for AI
+                top_markets = "\n".join([
+                    f"- {m['question']}: spread={m['spread_pct']:.1f}%, depth={m['bid_depth']:.0f}/{m['ask_depth']:.0f}"
+                    for m in recommendations[:5]
+                ])
+
+                # Get quick AI insight (non-streaming)
+                from anthropic import Anthropic
+                ai_client = Anthropic(api_key=assistant.api_key)
+                response = ai_client.messages.create(
+                    model="claude-3-5-haiku-20241022",  # Use fast model for quick response
+                    max_tokens=200,
+                    messages=[{
+                        "role": "user",
+                        "content": f"In 2-3 sentences, explain why these markets are good for market making:\n{top_markets}"
+                    }]
+                )
+                ai_explanation = response.content[0].text
+            except Exception as e:
+                logger.error(f"AI explanation failed: {e}")
+
+        return {
+            "recommendations": recommendations,
+            "ai_explanation": ai_explanation,
+            "total_analyzed": len(market_analysis),
+        }
+
+    finally:
+        await client.close()
 
 
 # ==================== WebSocket ====================

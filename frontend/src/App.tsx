@@ -132,6 +132,18 @@ interface Config {
   refresh_interval: number
 }
 
+interface MarketRecommendation {
+  token_id: string
+  question: string
+  mid_price: number
+  spread: number
+  spread_pct: number
+  bid_depth: number
+  ask_depth: number
+  profit_score: number
+  already_active: boolean
+}
+
 type ViewType = 'dashboard' | 'admin'
 
 function App() {
@@ -146,6 +158,9 @@ function App() {
   const [currentView, setCurrentView] = useState<ViewType>('dashboard')
   const [sessionStartTime] = useState<Date>(new Date())
   const wsRef = useRef<WebSocket | null>(null)
+  const [recommendations, setRecommendations] = useState<MarketRecommendation[]>([])
+  const [aiExplanation, setAiExplanation] = useState<string | null>(null)
+  const [loadingRecs, setLoadingRecs] = useState(false)
 
   // Helper to get market name from token ID
   const getMarketName = useCallback((tokenId: string): string => {
@@ -242,6 +257,42 @@ function App() {
       }
     } catch (e) {
       console.error('Failed to fetch status:', e)
+    }
+  }
+
+  const fetchRecommendations = async () => {
+    setLoadingRecs(true)
+    try {
+      const res = await fetch(`${API_URL}/api/ai/recommend-markets?limit=10`)
+      if (res.ok) {
+        const data = await res.json()
+        setRecommendations(data.recommendations || [])
+        setAiExplanation(data.ai_explanation || null)
+      }
+    } catch (e) {
+      console.error('Failed to fetch recommendations:', e)
+    } finally {
+      setLoadingRecs(false)
+    }
+  }
+
+  const addRecommendedMarket = async (tokenId: string) => {
+    try {
+      const res = await fetch(`${API_URL}/api/bot/markets/add`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token_ids: [tokenId] }),
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setSelectedMarkets(data.all_markets)
+        // Update recommendation status
+        setRecommendations(prev => prev.map(r =>
+          r.token_id === tokenId ? { ...r, already_active: true } : r
+        ))
+      }
+    } catch (e) {
+      console.error('Failed to add market:', e)
     }
   }
 
@@ -502,6 +553,47 @@ function App() {
               </div>
             </section>
           )}
+
+          {/* AI Market Recommendations */}
+          <section className="card ai-recommendations">
+            <h2><Zap size={18} /> AI Recommendations</h2>
+            <button
+              className="btn btn-secondary btn-sm"
+              onClick={fetchRecommendations}
+              disabled={loadingRecs}
+              style={{ marginBottom: '0.75rem', width: '100%' }}
+            >
+              {loadingRecs ? 'Analyzing...' : 'Find Best Markets'}
+            </button>
+
+            {aiExplanation && (
+              <div className="ai-explanation">
+                {aiExplanation}
+              </div>
+            )}
+
+            {recommendations.length > 0 && (
+              <div className="recommendation-list">
+                {recommendations.slice(0, 5).map(rec => (
+                  <div key={rec.token_id} className="recommendation-item">
+                    <div className="rec-info">
+                      <span className="rec-question">{rec.question}</span>
+                      <span className="rec-stats">
+                        Spread: {rec.spread_pct}% | Score: {rec.profit_score}
+                      </span>
+                    </div>
+                    <button
+                      className={`btn btn-sm ${rec.already_active ? 'btn-secondary' : 'btn-primary'}`}
+                      onClick={() => !rec.already_active && addRecommendedMarket(rec.token_id)}
+                      disabled={rec.already_active}
+                    >
+                      {rec.already_active ? 'Active' : 'Add'}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
 
           {/* Market Selection */}
           <section className="card market-selection">
