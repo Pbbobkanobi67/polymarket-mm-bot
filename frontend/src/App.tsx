@@ -18,7 +18,11 @@ import {
   Target,
   AlertTriangle,
   Zap,
-  PieChart
+  PieChart,
+  Bell,
+  BellOff,
+  Download,
+  Filter
 } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import './App.css'
@@ -162,6 +166,12 @@ function App() {
   const [recommendations, setRecommendations] = useState<MarketRecommendation[]>([])
   const [aiExplanation, setAiExplanation] = useState<string | null>(null)
   const [loadingRecs, setLoadingRecs] = useState(false)
+  const [notificationsEnabled, setNotificationsEnabled] = useState(false)
+  const [lastFillsCount, setLastFillsCount] = useState(0)
+  const [pnlAlertThreshold, setPnlAlertThreshold] = useState<number | null>(null)
+  const [marketFilter, setMarketFilter] = useState<'all' | 'selected' | 'unselected'>('all')
+  const [stopLossThreshold, setStopLossThreshold] = useState<number | null>(null)
+  const [stopLossEnabled, setStopLossEnabled] = useState(false)
 
   // Update session duration every second
   useEffect(() => {
@@ -188,6 +198,65 @@ function App() {
       setSessionDuration('00:00:00')
     }
   }, [botState?.status, botStartTime])
+
+  // Request notification permission
+  const enableNotifications = async () => {
+    if ('Notification' in window) {
+      const permission = await Notification.requestPermission()
+      setNotificationsEnabled(permission === 'granted')
+    }
+  }
+
+  // Check for new fills and send notifications
+  useEffect(() => {
+    if (!notificationsEnabled || !botState) return
+
+    const currentFills = botState.fills_count || 0
+    if (currentFills > lastFillsCount && lastFillsCount > 0) {
+      const newFills = currentFills - lastFillsCount
+      new Notification('Trade Filled!', {
+        body: `${newFills} new fill${newFills > 1 ? 's' : ''} executed`,
+        icon: '/favicon.ico'
+      })
+      // Play sound
+      const audio = new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdH2Onp6WjHxwZGJqa3N8jJefoJ2TiH50b3J4gIuWnp6cloqAeXV2eoONl56enJWNhHx5eXyDjJSbm5mVkIiDfn1/gYeMkpaYlpOPioWCgYGEiIyQk5WTko6KhoSCg4WIi46RkpGPjImGhIODhYeKjI6Pj46Ni4mGhYWGh4qMjY6Ojo2LioeGhYaHiYuMjY6OjYyKiIaFhYaHiYqMjI2NjIuJh4aFhYaHiImLjIyMi4qIh4aFhYaHiImKi4uLioqIh4aFhYaGiImKi4uKiomHhoWFhYaHiImKioqJiIeGhYWFhoaIiYqKiomIh4aFhYWGh4iJiYqJiIeGhYWFhYaHiIiJiYiIh4aFhYWFhoeIiIiIiIeGhYWFhYaGh4iIiIiHh4aFhYWFhoaHiIiIh4eGhYWFhYWGhoeIiIeHh4aFhYWFhYaGh4eHh4eGhYWFhYWGhoeHh4eGhoaFhYWFhYaGh4eHhoaGhYWFhYWFhoaHh4eGhoaFhYWFhYWGhoeHh4aGhYWFhYWFhYaGhoaGhoWFhYWFhYWGhoaGhoaFhYWFhYWFhYaGhoaGhYWFhYWFhYWFhoaGhoWFhYWFhYWFhYWGhoaFhYWFhYWFhYWFhoaFhYWFhYWFhYWFhYaFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhQ==')
+      audio.volume = 0.3
+      audio.play().catch(() => {})
+    }
+    setLastFillsCount(currentFills)
+
+    // PnL threshold alert
+    if (pnlAlertThreshold !== null) {
+      const totalPnl = (botState.risk_metrics?.realized_pnl || 0) + (botState.risk_metrics?.unrealized_pnl || 0)
+      if (Math.abs(totalPnl) >= Math.abs(pnlAlertThreshold)) {
+        new Notification('PnL Alert!', {
+          body: `Total PnL: $${totalPnl.toFixed(2)} (threshold: $${pnlAlertThreshold})`,
+          icon: '/favicon.ico'
+        })
+        setPnlAlertThreshold(null) // Reset to prevent spam
+      }
+    }
+  }, [botState?.fills_count, botState?.risk_metrics, notificationsEnabled, lastFillsCount, pnlAlertThreshold])
+
+  // Stop-loss auto-stop
+  useEffect(() => {
+    if (!stopLossEnabled || stopLossThreshold === null || !botState) return
+    if (botState.status !== 'running') return
+
+    const totalPnl = (botState.risk_metrics?.realized_pnl || 0) + (botState.risk_metrics?.unrealized_pnl || 0)
+    if (totalPnl <= stopLossThreshold) {
+      // Trigger stop
+      stopBot()
+      setStopLossEnabled(false)
+      if (notificationsEnabled) {
+        new Notification('Stop-Loss Triggered!', {
+          body: `Bot stopped. PnL: $${totalPnl.toFixed(2)} (limit: $${stopLossThreshold})`,
+          icon: '/favicon.ico'
+        })
+      }
+      setError(`Stop-loss triggered at $${totalPnl.toFixed(2)}. Bot has been stopped.`)
+    }
+  }, [botState?.risk_metrics, stopLossEnabled, stopLossThreshold, botState?.status, notificationsEnabled])
 
   // Helper to get market name from token ID
   const getMarketName = useCallback((tokenId: string): string => {
@@ -332,6 +401,33 @@ function App() {
     ))
   }
 
+  // Export trades to CSV
+  const exportTradesToCSV = () => {
+    if (!botState?.recent_trades?.length) {
+      setError('No trades to export')
+      return
+    }
+
+    const headers = ['Timestamp', 'Token ID', 'Side', 'Price', 'Size', 'Trade ID']
+    const rows = botState.recent_trades.map(trade => [
+      trade.timestamp,
+      trade.token_id,
+      trade.side,
+      trade.price,
+      trade.size,
+      trade.trade_id
+    ])
+
+    const csv = [headers, ...rows].map(row => row.join(',')).join('\n')
+    const blob = new Blob([csv], { type: 'text/csv' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `trades_${new Date().toISOString().slice(0, 10)}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
   const startBot = async () => {
     if (selectedMarkets.length === 0) {
       setError('Please select at least one market')
@@ -450,9 +546,20 @@ function App() {
     }
   }
 
-  const filteredMarkets = markets.filter(m =>
-    m.question.toLowerCase().includes(searchQuery.toLowerCase())
-  )
+  const filteredMarkets = markets.filter(m => {
+    // Text search filter
+    if (!m.question.toLowerCase().includes(searchQuery.toLowerCase())) {
+      return false
+    }
+    // Selection filter
+    if (marketFilter === 'selected' && !selectedMarkets.includes(m.yes_token_id)) {
+      return false
+    }
+    if (marketFilter === 'unselected' && selectedMarkets.includes(m.yes_token_id)) {
+      return false
+    }
+    return true
+  })
 
   const isRunning = botState?.status === 'running'
   const totalPnL = (botState?.risk_metrics?.realized_pnl || 0) + (botState?.risk_metrics?.unrealized_pnl || 0)
@@ -542,6 +649,60 @@ function App() {
               <button className="btn btn-secondary" onClick={fetchStatus}>
                 <RefreshCw size={16} /> Refresh
               </button>
+            </div>
+          </section>
+
+          {/* Notifications */}
+          <section className="card">
+            <h2>{notificationsEnabled ? <Bell size={18} /> : <BellOff size={18} />} Notifications</h2>
+            <div className="notification-controls">
+              <button
+                className={`btn ${notificationsEnabled ? 'btn-secondary' : 'btn-primary'} btn-sm`}
+                onClick={enableNotifications}
+                style={{ width: '100%', marginBottom: '0.5rem' }}
+              >
+                {notificationsEnabled ? 'Notifications Enabled' : 'Enable Notifications'}
+              </button>
+              <label className="pnl-alert-input">
+                <span>PnL Alert Threshold ($)</span>
+                <input
+                  type="number"
+                  step="0.01"
+                  placeholder="e.g. -5.00 or 10.00"
+                  value={pnlAlertThreshold ?? ''}
+                  onChange={e => setPnlAlertThreshold(e.target.value ? parseFloat(e.target.value) : null)}
+                />
+              </label>
+              <p className="notification-hint">
+                Get alerts for trade fills and when PnL crosses your threshold.
+              </p>
+              <div className="stop-loss-section">
+                <label className="checkbox stop-loss-toggle">
+                  <input
+                    type="checkbox"
+                    checked={stopLossEnabled}
+                    onChange={e => setStopLossEnabled(e.target.checked)}
+                  />
+                  <span>Enable Stop-Loss</span>
+                </label>
+                {stopLossEnabled && (
+                  <label className="pnl-alert-input">
+                    <span>Stop at PnL ($)</span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      placeholder="e.g. -10.00"
+                      value={stopLossThreshold ?? ''}
+                      onChange={e => setStopLossThreshold(e.target.value ? parseFloat(e.target.value) : null)}
+                    />
+                  </label>
+                )}
+                {stopLossEnabled && stopLossThreshold !== null && (
+                  <p className="stop-loss-warning">
+                    Bot will auto-stop if PnL reaches ${stopLossThreshold.toFixed(2)}
+                  </p>
+                )}
+              </div>
             </div>
           </section>
 
@@ -638,7 +799,27 @@ function App() {
 
           {/* Market Selection */}
           <section className="card market-selection">
-            <h2>Markets ({selectedMarkets.length} active)</h2>
+            <h2><Filter size={18} /> Markets ({selectedMarkets.length} active)</h2>
+            <div className="market-filters">
+              <button
+                className={`filter-btn ${marketFilter === 'all' ? 'active' : ''}`}
+                onClick={() => setMarketFilter('all')}
+              >
+                All
+              </button>
+              <button
+                className={`filter-btn ${marketFilter === 'selected' ? 'active' : ''}`}
+                onClick={() => setMarketFilter('selected')}
+              >
+                Selected
+              </button>
+              <button
+                className={`filter-btn ${marketFilter === 'unselected' ? 'active' : ''}`}
+                onClick={() => setMarketFilter('unselected')}
+              >
+                Available
+              </button>
+            </div>
             <input
               type="text"
               placeholder="Search markets..."
@@ -797,7 +978,16 @@ function App() {
 
           {/* Trade History */}
           <section className="card">
-            <h2>Trade History ({botState?.fills_count || 0} total fills)</h2>
+            <div className="trade-history-header">
+              <h2>Trade History ({botState?.fills_count || 0} total fills)</h2>
+              <button
+                className="btn btn-secondary btn-sm"
+                onClick={exportTradesToCSV}
+                disabled={!botState?.recent_trades?.length}
+              >
+                <Download size={14} /> Export CSV
+              </button>
+            </div>
             {botState?.recent_trades && botState.recent_trades.length > 0 ? (
               <div className="trade-history-container">
                 <table className="data-table">
