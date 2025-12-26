@@ -39,6 +39,9 @@ except ImportError:
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# State persistence file path
+STATE_FILE = os.path.join(os.path.dirname(__file__), '.bot_state.json')
+
 
 # ==================== State ====================
 
@@ -63,6 +66,58 @@ class BotState:
         # WebSocket clients for broadcasting
         self.ws_clients: List[WebSocket] = []
         self.broadcast_task: Optional[asyncio.Task] = None
+
+        # Load saved state on init
+        self._load_state()
+
+    def _save_state(self):
+        """Save bot state to file for persistence across restarts"""
+        state_data = {
+            "was_running": self.is_running,
+            "target_markets": self.target_markets,
+            "config": self.config,
+            "saved_at": datetime.utcnow().isoformat(),
+        }
+        try:
+            with open(STATE_FILE, 'w') as f:
+                json.dump(state_data, f, indent=2)
+            logger.info(f"Bot state saved: running={self.is_running}, markets={len(self.target_markets)}")
+        except Exception as e:
+            logger.error(f"Failed to save state: {e}")
+
+    def _load_state(self):
+        """Load saved state from file"""
+        try:
+            if os.path.exists(STATE_FILE):
+                with open(STATE_FILE, 'r') as f:
+                    state_data = json.load(f)
+
+                # Restore config
+                saved_config = state_data.get("config", {})
+                for key, value in saved_config.items():
+                    if key in self.config:
+                        self.config[key] = value
+
+                # Store target markets for potential auto-restart
+                self.target_markets = state_data.get("target_markets", [])
+                self._was_running = state_data.get("was_running", False)
+
+                logger.info(f"Bot state loaded: was_running={self._was_running}, markets={len(self.target_markets)}")
+            else:
+                self._was_running = False
+        except Exception as e:
+            logger.error(f"Failed to load state: {e}")
+            self._was_running = False
+
+    async def auto_restart(self):
+        """Auto-restart bot if it was running before server shutdown"""
+        if getattr(self, '_was_running', False) and self.target_markets:
+            logger.info(f"Auto-restarting bot with {len(self.target_markets)} markets...")
+            try:
+                await self.start_bot(self.target_markets)
+                logger.info("Bot auto-restart successful!")
+            except Exception as e:
+                logger.error(f"Auto-restart failed: {e}")
 
     async def start_bot(self, token_ids: List[str]):
         """Start the bot with given token IDs"""
@@ -96,6 +151,9 @@ class BotState:
         self.is_running = True
         self.bot_task = asyncio.create_task(self._run_bot())
         self.broadcast_task = asyncio.create_task(self._broadcast_loop())
+
+        # Save state for auto-restart
+        self._save_state()
 
     async def _run_bot(self):
         """Run bot in background"""
@@ -134,6 +192,9 @@ class BotState:
         self.is_running = False
         self.bot = None
         self.client = None
+
+        # Save state (bot stopped)
+        self._save_state()
 
     async def _broadcast_loop(self):
         """Broadcast bot state to WebSocket clients"""
@@ -312,8 +373,15 @@ def get_ai_assistant() -> Optional["TradingAssistant"]:
 async def lifespan(app: FastAPI):
     """Startup and shutdown events"""
     logger.info("API server starting...")
+
+    # Auto-restart bot if it was running before shutdown
+    await state.auto_restart()
+
     yield
+
     logger.info("API server shutting down...")
+    # Save state before stopping (keep was_running=True for next restart)
+    state._save_state()
     await state.stop_bot()
 
 
