@@ -66,7 +66,7 @@ class TradingAssistant:
             raise ValueError("ANTHROPIC_API_KEY not configured")
 
         self.client = Anthropic(api_key=self.api_key)
-        self.model = os.getenv("AI_MODEL", "claude-3-5-haiku-20241022")
+        self.model = os.getenv("AI_MODEL", "claude-sonnet-4-20250514")
         self.max_tokens = int(os.getenv("AI_MAX_TOKENS", "1024"))
 
         # Conversation history storage (in-memory, keyed by conversation_id)
