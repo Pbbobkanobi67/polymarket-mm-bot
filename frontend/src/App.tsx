@@ -16,7 +16,9 @@ import {
   Clock,
   Percent,
   Target,
-  AlertTriangle
+  AlertTriangle,
+  Zap,
+  PieChart
 } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import './App.css'
@@ -79,6 +81,21 @@ interface Trade {
   timestamp: string
 }
 
+interface SimulationStats {
+  orders_placed: number
+  orders_filled: number
+  orders_partial: number
+  orders_cancelled: number
+  total_volume: number
+  maker_volume: number
+  taker_volume: number
+  total_fees: number
+  adverse_fills: number
+  favorable_fills: number
+  adverse_fill_rate: number
+  balance: number
+}
+
 interface BotState {
   status: string
   timestamp: string
@@ -92,6 +109,7 @@ interface BotState {
   pnl_history: PnLSnapshot[]
   fills_count: number
   recent_trades: Trade[]
+  simulation_stats: SimulationStats | null
 }
 
 interface Market {
@@ -808,6 +826,93 @@ function App() {
                 </div>
               </div>
             </section>
+
+            {/* Simulation Stats */}
+            {botState?.simulation_stats && (
+              <section className="card admin-simulation-section">
+                <h2><Zap size={18} /> Simulation Statistics</h2>
+                <div className="simulation-grid">
+                  <div className="simulation-card primary">
+                    <div className="simulation-card-header">
+                      <PieChart size={20} />
+                      <span>Adverse Fill Rate</span>
+                    </div>
+                    <div className={`simulation-card-value ${botState.simulation_stats.adverse_fill_rate > 0.3 ? 'danger' : botState.simulation_stats.adverse_fill_rate > 0.1 ? 'warning' : 'success'}`}>
+                      {(botState.simulation_stats.adverse_fill_rate * 100).toFixed(1)}%
+                    </div>
+                    <div className="simulation-card-subtitle">
+                      {botState.simulation_stats.adverse_fills} adverse / {botState.simulation_stats.favorable_fills} favorable
+                    </div>
+                  </div>
+                  <div className="simulation-card">
+                    <div className="simulation-card-header">
+                      <BarChart3 size={20} />
+                      <span>Maker Volume</span>
+                    </div>
+                    <div className="simulation-card-value">
+                      ${botState.simulation_stats.maker_volume.toFixed(2)}
+                    </div>
+                    <div className="simulation-card-subtitle">
+                      {botState.simulation_stats.total_volume > 0
+                        ? `${((botState.simulation_stats.maker_volume / botState.simulation_stats.total_volume) * 100).toFixed(0)}% of total`
+                        : '0% of total'}
+                    </div>
+                  </div>
+                  <div className="simulation-card">
+                    <div className="simulation-card-header">
+                      <TrendingDown size={20} />
+                      <span>Taker Volume</span>
+                    </div>
+                    <div className="simulation-card-value">
+                      ${botState.simulation_stats.taker_volume.toFixed(2)}
+                    </div>
+                    <div className="simulation-card-subtitle">
+                      {botState.simulation_stats.total_volume > 0
+                        ? `${((botState.simulation_stats.taker_volume / botState.simulation_stats.total_volume) * 100).toFixed(0)}% of total`
+                        : '0% of total'}
+                    </div>
+                  </div>
+                  <div className="simulation-card">
+                    <div className="simulation-card-header">
+                      <DollarSign size={20} />
+                      <span>Paper Balance</span>
+                    </div>
+                    <div className={`simulation-card-value ${botState.simulation_stats.balance >= 1000 ? 'success' : 'danger'}`}>
+                      ${botState.simulation_stats.balance.toFixed(2)}
+                    </div>
+                    <div className="simulation-card-subtitle">
+                      Started at $1,000.00
+                    </div>
+                  </div>
+                </div>
+                <div className="simulation-details">
+                  <div className="simulation-detail-row">
+                    <span className="simulation-detail-label">Orders Placed</span>
+                    <span className="simulation-detail-value">{botState.simulation_stats.orders_placed}</span>
+                  </div>
+                  <div className="simulation-detail-row">
+                    <span className="simulation-detail-label">Orders Filled</span>
+                    <span className="simulation-detail-value">{botState.simulation_stats.orders_filled}</span>
+                  </div>
+                  <div className="simulation-detail-row">
+                    <span className="simulation-detail-label">Partial Fills</span>
+                    <span className="simulation-detail-value">{botState.simulation_stats.orders_partial}</span>
+                  </div>
+                  <div className="simulation-detail-row">
+                    <span className="simulation-detail-label">Orders Cancelled</span>
+                    <span className="simulation-detail-value">{botState.simulation_stats.orders_cancelled}</span>
+                  </div>
+                  <div className="simulation-detail-row">
+                    <span className="simulation-detail-label">Total Volume</span>
+                    <span className="simulation-detail-value">${botState.simulation_stats.total_volume.toFixed(2)}</span>
+                  </div>
+                  <div className="simulation-detail-row">
+                    <span className="simulation-detail-label">Total Fees</span>
+                    <span className="simulation-detail-value">${botState.simulation_stats.total_fees.toFixed(4)}</span>
+                  </div>
+                </div>
+              </section>
+            )}
 
             {/* Full Trade History */}
             <section className="card admin-trades-section">

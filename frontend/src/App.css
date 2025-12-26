@@ -817,3 +817,112 @@ body {
   align-items: center;
   gap: 1rem;
 }
+
+/* Simulation Statistics Section */
+.admin-simulation-section {
+  margin-top: 0.5rem;
+}
+
+.simulation-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+@media (max-width: 1024px) {
+  .simulation-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 640px) {
+  .simulation-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.simulation-card {
+  display: flex;
+  flex-direction: column;
+  padding: 1rem;
+  background: var(--bg-secondary);
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+}
+
+.simulation-card.primary {
+  border-color: var(--accent-blue);
+  background: linear-gradient(135deg, rgba(74, 158, 255, 0.1), var(--bg-secondary));
+}
+
+.simulation-card-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  margin-bottom: 0.5rem;
+}
+
+.simulation-card-header svg {
+  opacity: 0.7;
+}
+
+.simulation-card-value {
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin-bottom: 0.25rem;
+}
+
+.simulation-card-value.success {
+  color: var(--accent-green);
+}
+
+.simulation-card-value.warning {
+  color: var(--accent-yellow);
+}
+
+.simulation-card-value.danger {
+  color: var(--accent-red);
+}
+
+.simulation-card-subtitle {
+  font-size: 0.6875rem;
+  color: var(--text-secondary);
+}
+
+.simulation-details {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.5rem;
+  padding: 1rem;
+  background: var(--bg-secondary);
+  border-radius: 6px;
+}
+
+@media (max-width: 768px) {
+  .simulation-details {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.simulation-detail-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem 0.75rem;
+  background: var(--bg-card);
+  border-radius: 4px;
+}
+
+.simulation-detail-label {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+.simulation-detail-value {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
